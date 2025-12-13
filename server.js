@@ -2,10 +2,14 @@ import express from 'express';
 import sqlite3 from 'sqlite3';
 import { open } from 'sqlite';
 import cors from 'cors';
-import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = 3001;
+const PORT = process.env.PORT || 3001;
 
 // Middleware
 app.use(cors());
@@ -14,6 +18,11 @@ app.use(express.json({ limit: '50mb' }));
 
 // Database Initialization
 let db;
+
+// Use /data directory if available (Render Disk), otherwise local file
+const DB_PATH = process.env.RENDER_DISK_PATH 
+    ? path.join(process.env.RENDER_DISK_PATH, 'database.sqlite')
+    : './database.sqlite';
 
 const DEFAULT_PROFILE = {
   id: 1,
@@ -75,8 +84,10 @@ const DEFAULT_PAPERS = [
 ];
 
 async function initDb() {
+  console.log(`Using Database at: ${DB_PATH}`);
+  
   db = await open({
-    filename: './database.sqlite',
+    filename: DB_PATH,
     driver: sqlite3.Database
   });
 
@@ -152,92 +163,115 @@ async function initDb() {
 }
 
 initDb().then(() => {
+  // Serve static files from the 'dist' directory (Vite build output)
+  app.use(express.static(path.join(__dirname, 'dist')));
+
+  // --- API Routes ---
+
+  // Profile
+  app.get('/api/profile', async (req, res) => {
+    try {
+      const profile = await db.get('SELECT * FROM profile WHERE id = 1');
+      res.json(profile);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post('/api/profile', async (req, res) => {
+    const p = req.body;
+    try {
+      await db.run(
+        `UPDATE profile SET name=?, title=?, institution=?, bio=?, avatarUrl=?, email=?, twitterUrl=?, linkedinUrl=?, githubUrl=? WHERE id=1`,
+        [p.name, p.title, p.institution, p.bio, p.avatarUrl, p.email, p.twitterUrl, p.linkedinUrl, p.githubUrl]
+      );
+      res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Posts
+  app.get('/api/posts', async (req, res) => {
+    try {
+      const posts = await db.all('SELECT * FROM posts ORDER BY date DESC');
+      const parsed = posts.map(p => ({ ...p, tags: JSON.parse(p.tags) }));
+      res.json(parsed);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post('/api/posts', async (req, res) => {
+    const p = req.body;
+    const tags = JSON.stringify(p.tags);
+    try {
+      const exists = await db.get('SELECT id FROM posts WHERE id = ?', [p.id]);
+      
+      if (exists) {
+        await db.run(
+          `UPDATE posts SET title=?, content=?, date=?, tags=?, type=?, imageUrl=?, videoUrl=? WHERE id=?`,
+          [p.title, p.content, p.date, tags, p.type, p.imageUrl, p.videoUrl, p.id]
+        );
+      } else {
+        await db.run(
+          `INSERT INTO posts (id, title, content, date, tags, type, imageUrl, videoUrl) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [p.id, p.title, p.content, p.date, tags, p.type, p.imageUrl, p.videoUrl]
+        );
+      }
+      res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.delete('/api/posts/:id', async (req, res) => {
+    try {
+      await db.run('DELETE FROM posts WHERE id = ?', [req.params.id]);
+      res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Papers
+  app.get('/api/papers', async (req, res) => {
+    try {
+      const papers = await db.all('SELECT * FROM papers ORDER BY year DESC');
+      const parsed = papers.map(p => ({
+        ...p,
+        authors: JSON.parse(p.authors),
+        tags: JSON.parse(p.tags)
+      }));
+      res.json(parsed);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post('/api/papers', async (req, res) => {
+    const p = req.body;
+    const authors = JSON.stringify(p.authors);
+    const tags = JSON.stringify(p.tags);
+    try {
+      const exists = await db.get('SELECT id FROM papers WHERE id = ?', [p.id]);
+
+      if (exists) {
+        await db.run(
+          `UPDATE papers SET title=?, authors=?, abstract=?, journal=?, year=?, pdfUrl=?, tags=? WHERE id=?`,
+          [p.title, authors, p.abstract, p.journal, p.year, p.pdfUrl, tags, p.id]
+        );
+      } else {
+        await db.run(
+          `INSERT INTO papers (id, title, authors, abstract, journal, year, pdfUrl, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [p.id, p.title, authors, p.abstract, p.journal, p.year, p.pdfUrl, tags]
+        );
+      }
+      res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.delete('/api/papers/:id', async (req, res) => {
+    try {
+      await db.run('DELETE FROM papers WHERE id = ?', [req.params.id]);
+      res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Fallback for SPA (Must be last)
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+  });
+
   app.listen(PORT, () => {
     console.log(`API Server running on http://localhost:${PORT}`);
   });
-});
-
-// --- API Routes ---
-
-// Profile
-app.get('/api/profile', async (req, res) => {
-  const profile = await db.get('SELECT * FROM profile WHERE id = 1');
-  res.json(profile);
-});
-
-app.post('/api/profile', async (req, res) => {
-  const p = req.body;
-  await db.run(
-    `UPDATE profile SET name=?, title=?, institution=?, bio=?, avatarUrl=?, email=?, twitterUrl=?, linkedinUrl=?, githubUrl=? WHERE id=1`,
-    [p.name, p.title, p.institution, p.bio, p.avatarUrl, p.email, p.twitterUrl, p.linkedinUrl, p.githubUrl]
-  );
-  res.json({ success: true });
-});
-
-// Posts
-app.get('/api/posts', async (req, res) => {
-  const posts = await db.all('SELECT * FROM posts ORDER BY date DESC');
-  // Parse tags JSON
-  const parsed = posts.map(p => ({ ...p, tags: JSON.parse(p.tags) }));
-  res.json(parsed);
-});
-
-app.post('/api/posts', async (req, res) => {
-  const p = req.body;
-  const tags = JSON.stringify(p.tags);
-  const exists = await db.get('SELECT id FROM posts WHERE id = ?', [p.id]);
-  
-  if (exists) {
-    await db.run(
-      `UPDATE posts SET title=?, content=?, date=?, tags=?, type=?, imageUrl=?, videoUrl=? WHERE id=?`,
-      [p.title, p.content, p.date, tags, p.type, p.imageUrl, p.videoUrl, p.id]
-    );
-  } else {
-    await db.run(
-      `INSERT INTO posts (id, title, content, date, tags, type, imageUrl, videoUrl) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [p.id, p.title, p.content, p.date, tags, p.type, p.imageUrl, p.videoUrl]
-    );
-  }
-  res.json({ success: true });
-});
-
-app.delete('/api/posts/:id', async (req, res) => {
-  await db.run('DELETE FROM posts WHERE id = ?', [req.params.id]);
-  res.json({ success: true });
-});
-
-// Papers
-app.get('/api/papers', async (req, res) => {
-  const papers = await db.all('SELECT * FROM papers ORDER BY year DESC');
-  const parsed = papers.map(p => ({
-    ...p,
-    authors: JSON.parse(p.authors),
-    tags: JSON.parse(p.tags)
-  }));
-  res.json(parsed);
-});
-
-app.post('/api/papers', async (req, res) => {
-  const p = req.body;
-  const authors = JSON.stringify(p.authors);
-  const tags = JSON.stringify(p.tags);
-  const exists = await db.get('SELECT id FROM papers WHERE id = ?', [p.id]);
-
-  if (exists) {
-    await db.run(
-      `UPDATE papers SET title=?, authors=?, abstract=?, journal=?, year=?, pdfUrl=?, tags=? WHERE id=?`,
-      [p.title, authors, p.abstract, p.journal, p.year, p.pdfUrl, tags, p.id]
-    );
-  } else {
-    await db.run(
-      `INSERT INTO papers (id, title, authors, abstract, journal, year, pdfUrl, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [p.id, p.title, authors, p.abstract, p.journal, p.year, p.pdfUrl, tags]
-    );
-  }
-  res.json({ success: true });
-});
-
-app.delete('/api/papers/:id', async (req, res) => {
-  await db.run('DELETE FROM papers WHERE id = ?', [req.params.id]);
-  res.json({ success: true });
 });

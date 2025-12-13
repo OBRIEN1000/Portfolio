@@ -1,0 +1,5 @@
+{
+  "name": "ScholarSpace",
+  "description": "A minimalist, AI-enhanced research portfolio and newsletter platform. Features a 'backdoor' admin mode for content management, smart paper summarization, and an integrated research journal.",
+  "requestFramePermissions": []
+}

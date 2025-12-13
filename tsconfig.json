@@ -1,23 +1,20 @@
 {
   "compilerOptions": {
     "target": "ES2020",
-    "lib": ["DOM", "DOM.Iterable", "ES2020"],
-
-    "module": "Node16",
-    "moduleResolution": "Node16",
-
-    "jsx": "react-jsx",
-
-    "strict": true,
+    "useDefineForClassFields": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
     "skipLibCheck": true,
-    "noEmit": true,
-
-    "esModuleInterop": true,
-    "allowSyntheticDefaultImports": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-
-    "types": ["react", "react-dom"]
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noFallthroughCasesInSwitch": true
   },
   "include": ["**/*.ts", "**/*.tsx"],
   "exclude": ["node_modules"]

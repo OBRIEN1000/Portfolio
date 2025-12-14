@@ -3,6 +3,7 @@ import sqlite3 from 'sqlite3';
 import { open } from 'sqlite';
 import cors from 'cors';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -13,16 +14,27 @@ const PORT = process.env.PORT || 3001;
 
 // Middleware
 app.use(cors());
-// Increase limit for Base64 image uploads
+// Increase limit for Base64 image uploads and huge restores
 app.use(express.json({ limit: '50mb' }));
 
 // Database Initialization
 let db;
 
-// Use /data directory if available (Render Disk), otherwise local file
-const DB_PATH = process.env.RENDER_DISK_PATH 
-    ? path.join(process.env.RENDER_DISK_PATH, 'database.sqlite')
-    : './database.sqlite';
+// DATA PERSISTENCE CONFIGURATION
+// On Render, you must attach a Disk and mount it (e.g., to /var/lib/data).
+// Set the environment variable RENDER_DISK_PATH to that mount point.
+const DISK_PATH = process.env.RENDER_DISK_PATH || './data'; // Default to ./data if env not set
+const DB_PATH = path.join(DISK_PATH, 'database.sqlite');
+
+// Ensure the directory for the database exists
+if (!fs.existsSync(DISK_PATH)) {
+    console.log(`Creating database directory at: ${DISK_PATH}`);
+    try {
+        fs.mkdirSync(DISK_PATH, { recursive: true });
+    } catch (err) {
+        console.error('Failed to create database directory:', err);
+    }
+}
 
 const DEFAULT_PROFILE = {
   id: 1,
@@ -34,7 +46,8 @@ const DEFAULT_PROFILE = {
   email: "alex.mercer@example.ac.edu",
   twitterUrl: "https://twitter.com",
   linkedinUrl: "https://linkedin.com",
-  githubUrl: "https://github.com"
+  githubUrl: "https://github.com",
+  footerText: "© 2024 Dr. Alex V. Mercer. All rights reserved."
 };
 
 const DEFAULT_POSTS = [
@@ -103,7 +116,8 @@ async function initDb() {
       email TEXT,
       twitterUrl TEXT,
       linkedinUrl TEXT,
-      githubUrl TEXT
+      githubUrl TEXT,
+      footerText TEXT
     );
 
     CREATE TABLE IF NOT EXISTS posts (
@@ -128,13 +142,25 @@ async function initDb() {
       tags TEXT
     );
   `);
+  
+  // Migration: Add footerText column if it doesn't exist (for existing DBs)
+  try {
+      const columns = await db.all("PRAGMA table_info(profile)");
+      const hasFooter = columns.some(c => c.name === 'footerText');
+      if (!hasFooter) {
+          console.log("Migrating DB: Adding footerText column...");
+          await db.exec("ALTER TABLE profile ADD COLUMN footerText TEXT");
+      }
+  } catch (e) {
+      console.error("Migration error:", e);
+  }
 
   // Seed Data if empty
   const profileCount = await db.get('SELECT count(*) as count FROM profile');
   if (profileCount.count === 0) {
     console.log('Seeding Profile...');
     await db.run(
-      `INSERT INTO profile (id, name, title, institution, bio, avatarUrl, email, twitterUrl, linkedinUrl, githubUrl) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO profile (id, name, title, institution, bio, avatarUrl, email, twitterUrl, linkedinUrl, githubUrl, footerText) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       Object.values(DEFAULT_PROFILE)
     );
   }
@@ -156,7 +182,7 @@ async function initDb() {
     for (const paper of DEFAULT_PAPERS) {
       await db.run(
         `INSERT INTO papers (id, title, authors, abstract, journal, year, pdfUrl, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [paper.id, paper.title, paper.authors, paper.abstract, paper.journal, paper.year, paper.pdfUrl, paper.tags]
+        [paper.id, paper.title, authors, p.abstract, p.journal, p.year, p.pdfUrl, tags]
       );
     }
   }
@@ -167,6 +193,73 @@ initDb().then(() => {
   app.use(express.static(path.join(__dirname, 'dist')));
 
   // --- API Routes ---
+
+  // --- BACKUP & RESTORE SYSTEM ---
+  
+  app.get('/api/backup', async (req, res) => {
+    try {
+      const profile = await db.get('SELECT * FROM profile WHERE id = 1');
+      const posts = await db.all('SELECT * FROM posts');
+      const papers = await db.all('SELECT * FROM papers');
+      
+      const backupData = {
+        timestamp: new Date().toISOString(),
+        profile,
+        posts,
+        papers
+      };
+      
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Content-Disposition', 'attachment; filename=scholar-backup.json');
+      res.json(backupData);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post('/api/restore', async (req, res) => {
+    const { profile, posts, papers } = req.body;
+    
+    if (!profile || !posts || !papers) {
+        return res.status(400).json({ error: "Invalid backup file format" });
+    }
+
+    try {
+        await db.run('BEGIN TRANSACTION');
+
+        // 1. Restore Profile
+        await db.run('DELETE FROM profile');
+        await db.run(
+            `INSERT INTO profile (id, name, title, institution, bio, avatarUrl, email, twitterUrl, linkedinUrl, githubUrl, footerText) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [1, profile.name, profile.title, profile.institution, profile.bio, profile.avatarUrl, profile.email, profile.twitterUrl, profile.linkedinUrl, profile.githubUrl, profile.footerText]
+        );
+
+        // 2. Restore Posts
+        await db.run('DELETE FROM posts');
+        for (const post of posts) {
+             await db.run(
+                `INSERT INTO posts (id, title, content, date, tags, type, imageUrl, videoUrl) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                [post.id, post.title, post.content, post.date, post.tags, post.type, post.imageUrl, post.videoUrl]
+            );
+        }
+
+        // 3. Restore Papers
+        await db.run('DELETE FROM papers');
+        for (const paper of papers) {
+            await db.run(
+                `INSERT INTO papers (id, title, authors, abstract, journal, year, pdfUrl, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                [paper.id, paper.title, paper.authors, paper.abstract, paper.journal, paper.year, paper.pdfUrl, paper.tags]
+            );
+        }
+
+        await db.run('COMMIT');
+        res.json({ success: true, message: "Database restored successfully" });
+    } catch (e) {
+        await db.run('ROLLBACK');
+        console.error(e);
+        res.status(500).json({ error: e.message });
+    }
+  });
+
+  // --- STANDARD API ROUTES ---
 
   // Profile
   app.get('/api/profile', async (req, res) => {
@@ -180,8 +273,8 @@ initDb().then(() => {
     const p = req.body;
     try {
       await db.run(
-        `UPDATE profile SET name=?, title=?, institution=?, bio=?, avatarUrl=?, email=?, twitterUrl=?, linkedinUrl=?, githubUrl=? WHERE id=1`,
-        [p.name, p.title, p.institution, p.bio, p.avatarUrl, p.email, p.twitterUrl, p.linkedinUrl, p.githubUrl]
+        `UPDATE profile SET name=?, title=?, institution=?, bio=?, avatarUrl=?, email=?, twitterUrl=?, linkedinUrl=?, githubUrl=?, footerText=? WHERE id=1`,
+        [p.name, p.title, p.institution, p.bio, p.avatarUrl, p.email, p.twitterUrl, p.linkedinUrl, p.githubUrl, p.footerText]
       );
       res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }

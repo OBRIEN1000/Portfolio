@@ -8,6 +8,7 @@ export interface Profile {
   twitterUrl?: string;
   linkedinUrl?: string;
   githubUrl?: string;
+  footerText?: string;
 }
 
 export interface Post {

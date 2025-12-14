@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ViewMode, Profile } from '../types';
-import { BookOpen, PenTool, Layout as LayoutIcon, Lock, Unlock, Twitter, Linkedin, Github, Mail, Edit2, ShieldCheck, X } from 'lucide-react';
+import { BookOpen, PenTool, Layout as LayoutIcon, Lock, Unlock, Twitter, Linkedin, Github, Mail, Edit2, ShieldCheck, X, Database, Download, Upload } from 'lucide-react';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -29,6 +29,10 @@ const Layout: React.FC<LayoutProps> = ({
   const [code, setCode] = useState('');
   const [loginError, setLoginError] = useState('');
 
+  // Backup Modal State
+  const [isBackupOpen, setIsBackupOpen] = useState(false);
+  const [restoreStatus, setRestoreStatus] = useState<string>('');
+
   const navItems = [
     { id: 'articles', label: 'Newsletter', icon: <BookOpen size={18} /> },
     { id: 'papers', label: 'Publications', icon: <LayoutIcon size={18} /> },
@@ -54,6 +58,58 @@ const Layout: React.FC<LayoutProps> = ({
     } else {
         setLoginError('ACCESS DENIED: Invalid Identity or Code');
     }
+  };
+
+  const downloadBackup = async () => {
+      try {
+          const res = await fetch('/api/backup');
+          if (!res.ok) throw new Error('Failed to fetch backup');
+          const blob = await res.blob();
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `scholar-backup-${new Date().toISOString().split('T')[0]}.json`;
+          document.body.appendChild(a);
+          a.click();
+          window.URL.revokeObjectURL(url);
+          document.body.removeChild(a);
+      } catch (err) {
+          alert("Error downloading backup");
+      }
+  };
+
+  const handleRestore = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      if (!confirm("WARNING: This will overwrite all current data on the site with the data from the backup file. This cannot be undone. Are you sure?")) {
+          return;
+      }
+
+      setRestoreStatus('Restoring...');
+      
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+          try {
+              const json = JSON.parse(event.target?.result as string);
+              const res = await fetch('/api/restore', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(json)
+              });
+              
+              const data = await res.json();
+              if (res.ok) {
+                  setRestoreStatus('Success! Reloading...');
+                  setTimeout(() => window.location.reload(), 1000);
+              } else {
+                  setRestoreStatus(`Error: ${data.error}`);
+              }
+          } catch (err) {
+              setRestoreStatus('Error processing file');
+          }
+      };
+      reader.readAsText(file);
   };
 
   return (
@@ -127,7 +183,13 @@ const Layout: React.FC<LayoutProps> = ({
         onMouseLeave={() => setIsHoveringFooter(false)}
       >
         <div className="max-w-4xl mx-auto px-4 flex flex-col sm:flex-row justify-between items-center text-gray-400 text-sm">
-          <p>© {new Date().getFullYear()} {profile.name}. All rights reserved.</p>
+          <div className="max-w-md">
+             {profile.footerText ? (
+                 <p>{profile.footerText}</p>
+             ) : (
+                 <p>© {new Date().getFullYear()} {profile.name}. All rights reserved.</p>
+             )}
+          </div>
           
           <div className="flex items-center gap-4 mt-4 sm:mt-0">
             {profile.twitterUrl && (
@@ -150,6 +212,17 @@ const Layout: React.FC<LayoutProps> = ({
                 <Mail size={18} />
             </a>
             
+            {/* Admin Database Control */}
+            {viewMode === ViewMode.ADMIN && (
+                <button
+                    onClick={() => setIsBackupOpen(true)}
+                    className="p-2 text-blue-500 hover:text-blue-700 transition-colors"
+                    title="Database Backup/Restore"
+                >
+                    <Database size={16} />
+                </button>
+            )}
+
             {/* The "Backdoor" Toggle */}
             <button
               onClick={handleBackdoorClick}
@@ -217,6 +290,50 @@ const Layout: React.FC<LayoutProps> = ({
                 </form>
             </div>
         </div>
+      )}
+
+      {/* Backup/Restore Modal */}
+      {isBackupOpen && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+             <div className="bg-gray-900 border border-gray-700 w-full max-w-md rounded-xl shadow-2xl p-6 relative text-center">
+                 <button 
+                    onClick={() => setIsBackupOpen(false)}
+                    className="absolute top-4 right-4 text-gray-500 hover:text-white"
+                >
+                    <X size={20} />
+                </button>
+                
+                <h3 className="text-white font-bold text-xl mb-6">Database Management</h3>
+
+                <div className="grid grid-cols-2 gap-4">
+                    <button 
+                        onClick={downloadBackup}
+                        className="bg-gray-800 hover:bg-gray-700 border border-gray-600 text-white p-6 rounded-lg flex flex-col items-center gap-3 transition-colors group"
+                    >
+                        <Download size={32} className="text-blue-500 group-hover:scale-110 transition-transform" />
+                        <span className="font-medium">Download Backup</span>
+                        <span className="text-xs text-gray-400">Save JSON file</span>
+                    </button>
+
+                    <label className="bg-gray-800 hover:bg-gray-700 border border-gray-600 text-white p-6 rounded-lg flex flex-col items-center gap-3 transition-colors group cursor-pointer">
+                        <Upload size={32} className="text-green-500 group-hover:scale-110 transition-transform" />
+                        <span className="font-medium">Restore Data</span>
+                        <span className="text-xs text-gray-400">Upload JSON file</span>
+                        <input type="file" className="hidden" accept=".json" onChange={handleRestore} />
+                    </label>
+                </div>
+
+                {restoreStatus && (
+                    <div className="mt-6 p-3 bg-gray-800 rounded text-sm text-yellow-400 font-mono">
+                        {restoreStatus}
+                    </div>
+                )}
+                
+                <p className="mt-6 text-xs text-gray-500">
+                    Use this to save your work. Render Free Tier wipes data on restart. Always download a backup after making changes.
+                </p>
+             </div>
+          </div>
       )}
 
     </div>

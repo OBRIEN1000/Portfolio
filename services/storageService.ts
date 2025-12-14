@@ -1,7 +1,7 @@
 import { Post, Paper, Profile } from '../types';
 import { get, set, del } from 'idb-keyval';
 
-const API_URL = 'http://localhost:3001/api';
+const API_URL = '/api'; // Relative path for Vite proxy/prod
 let USE_LOCAL = false;
 
 const KEYS = {
@@ -20,7 +20,8 @@ const DEFAULT_PROFILE: Profile = {
   email: "alex.mercer@example.ac.edu",
   twitterUrl: "https://twitter.com",
   linkedinUrl: "https://linkedin.com",
-  githubUrl: "https://github.com"
+  githubUrl: "https://github.com",
+  footerText: "© 2024 Dr. Alex V. Mercer. All rights reserved."
 };
 
 const DEFAULT_POSTS: Post[] = [

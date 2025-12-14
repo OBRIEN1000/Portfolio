@@ -151,6 +151,17 @@ const ProfileEditor: React.FC<ProfileEditorProps> = ({ profile, onSave, onCancel
                 </div>
             )}
           </div>
+          
+          <div className="bg-gray-800/50 p-4 rounded-lg border border-gray-700">
+             <label className="block text-sm font-medium text-gray-300 mb-1">Footer Copyright Text</label>
+             <input 
+               type="text" 
+               className="w-full bg-gray-900 border border-gray-700 rounded-md p-2 text-white placeholder-gray-500 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+               value={formData.footerText || ''}
+               onChange={(e) => handleChange('footerText', e.target.value)}
+               placeholder="© 2024 Name. All rights reserved."
+             />
+          </div>
 
           <div className="pt-4 border-t border-gray-800">
              <h3 className="text-sm font-bold text-gray-200 mb-3">Contact & Social</h3>
